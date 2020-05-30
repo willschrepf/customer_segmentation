@@ -1,0 +1,178 @@
+---
+title: "customer_segmentation"
+author: "Will Schrepferman"
+date: "5/30/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, include = FALSE)
+library(tidyverse)
+library(dplyr)
+library(gt)
+library(ggplot2)
+library(janitor)
+library(purrr)
+library(cluster)
+library(gridExtra)
+library(grid)
+library(NbClust)
+library(factoextra)
+```
+
+## Introduction
+
+This project uses k-means clustering to practice customer segmentation! It's based off of https://data-flair.training/blogs/r-data-science-project-customer-segmentation/
+
+```{r read_data}
+customer_data <- read_csv("Mall_Customers.csv") %>%
+  clean_names()
+```
+
+Here's what the first rows of our customer data look like:
+
+```{r model, include = TRUE}
+customer_data %>%
+  head(5) %>%
+  gt() %>%
+  tab_header(title = "First Few Rows of Customer Data")
+```
+
+
+We need to segment customers based off of their core attributes- age, spending score, and income. First, we need to know how many clusters to segment them into.
+
+## Step 1: Identify number of clusters to use
+
+We'll use three methods to find this: the elbow method, average silhouette method, and gap statistics.
+
+### Elbow method
+
+The elbow method attempts to identify the point at which intra-cluster variation stays minimum- or where the 'elbow' of the measure of variation is on a graph:
+
+```{r elbow, include = TRUE}
+set.seed(123)
+
+# function to calculate total intra-cluster sum of square
+# use of customer_data[,3:5] just selects key variables we want- age, income, and spending score
+
+iss <- function(k){
+  kmeans(customer_data[,3:5], k,iter.max=100, nstart=100, algorithm="Lloyd" )$tot.withinss
+}
+
+# k values to iterate over
+
+k_vals <- 1:10
+
+iss_vals <- tibble(k = rep(1:10), iss = map_dbl(k_vals, iss))
+
+iss_vals %>%
+  ggplot(aes(x = k, y = iss)) +
+  scale_x_continuous(breaks = seq(1, 10, by = 1)) +
+  geom_line() +
+  labs(title = "Elbow Method", x = "Number of Clusters (k-value)", y = "Inttra-cluster Sum of Square") +
+  theme_minimal()
+```
+
+By best approximation, the 'elbow' seems to occur around a value of k = 4 or 5.
+
+### Average Silhoutte Method
+
+The average silhoutte method seeks to measure the quality of the clustering operation, ie how well within a cluster an object is. A high value for silhoutte width means good clustering, and average silhouette observations for different numbers of clusters can identify the optimal k-value.
+
+Here's what the silhoutte model looks like for a k of 2:
+
+```{r silhouette_1, include = TRUE}
+# get means for 2-cluster model
+k_of_2 <- kmeans(customer_data[,3:5], 2, iter.max = 100)
+
+# plot the silhouettes
+plot(silhouette(k_of_2$cluster, dist(customer_data[,3:5], "euclidean")))
+```
+
+Focus on the 'average silhouette width.' If we run the same thing for other k values and plot the average widths, we get this.
+
+```{r silhouette_2, include = TRUE}
+fviz_nbclust(customer_data[,3:5], kmeans, method = "silhouette")
+```
+
+So, the average silhouette method tells us that 6 is our optimal k-value.
+
+### Gap Statistics
+
+Gap statitistics build off of the elbow method, but add an extra layer: we compare intracluster variation of different values of k to their expected values under the null reference distribution of data.
+
+```{r gap_statistics, include = TRUE}
+set.seed(125)
+
+gap_statistic <- clusGap(customer_data[,3:5], FUN = kmeans, nstart = 25, K.max = 10, B = 50)
+fviz_gap_stat(gap_statistic)
+```
+
+This method suggest 1 as the optimal number of gaps, but that's not useful for analysis. This method can certainly be useful, but for this particular set of data, we will ignore this approach when determining the optimal k value.
+
+Of the remaining two methods, the elbow method suggests 4 or 5 as optimal, and the average silhouette approach suggests 6. Let's use the average of these- 5- for our k-value.
+
+## Step 2
+
+### K-means model
+
+Next, we simply run our k-means model using 5 for k. This gives us the hard-to-decipher result:
+
+```{r step_2, include = TRUE}
+# set up k means model with k of 5
+
+k_of_5 <- kmeans(customer_data[,3:5], 5, iter.max = 100, nstart = 50, algorithm = "Lloyd")
+
+k_of_5
+```
+
+Let's visualize it on a graph with a principal component analysis (PCA), which simplifies complexity in this data (which has 3 dimensions) into 2 dimensions.
+
+### PCA
+
+First, we need to look at the importance of all three components:
+
+```{r pca, include = TRUE}
+
+# principal component analysis
+
+pc_cluster = prcomp(customer_data[,3:5], scale = FALSE)
+summary(pc_cluster)
+```
+
+Components one (income) and two (spending) seem most important, so we'll use those in our visualization:
+
+### Visualization
+
+```{r visualize_final, include = TRUE}
+set.seed(1)
+ggplot(customer_data, aes(x = annual_income_k, y = spending_score_1_100)) + 
+  geom_point(stat = "identity", aes(color = as.factor(k_of_5$cluster))) +
+  scale_color_discrete(name=" ",
+              breaks=c("1", "2", "3", "4", "5"),
+              labels=c("Cluster 1", "Cluster 2", "Cluster 3", "Cluster 4", "Cluster 5")) +
+  ggtitle("Segments of Mall Customers", subtitle = "Using K-means Clustering") +
+  labs(x = "Income (in thousands)", y = "Spending Score")
+```
+
+This visualization misses out on the third dimension- age- but we can see that we've successfully segmented customers into 5 categories using k-means clustering!
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
